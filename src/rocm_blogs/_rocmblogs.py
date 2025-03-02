@@ -20,6 +20,8 @@ class ROCmBlogs:
         self.categories = []
         self.tags = []
         self.yaml_pattern = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+        # Cache for metadata to avoid redundant file I/O operations
+        self._metadata_cache = {}
 
     def find_readme_files_cache(self) -> None:
         """Cache the README files in the 'blogs' directory."""
@@ -150,34 +152,55 @@ class ROCmBlogs:
             return {}
 
     def extract_metadata_from_file(self, file_path: str) -> dict:
-        """Extract metadata from a blog file."""
-
+        """Extract metadata from a blog file with caching for better performance."""
+        
+        # Check if we've already extracted metadata for this file
+        if file_path in self._metadata_cache:
+            return self._metadata_cache[file_path]
+            
         print(f"Extracting metadata from {file_path}")
 
-        with open(file_path, "r", encoding="utf-8", errors="replace") as file:
-            content = file.read()
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as file:
+                content = file.read()
 
-        match = self.yaml_pattern.match(content)
+            match = self.yaml_pattern.match(content)
 
-        if match:
-            yaml_content = match.group(1)
+            if match:
+                yaml_content = match.group(1)
 
-            try:
-                metadata = yaml.safe_load(yaml_content)
+                try:
+                    metadata = yaml.safe_load(yaml_content)
 
-                self.categories.append(metadata.get("category", ""))
-                self.tags.append(metadata.get("tags", ""))
+                    # Add to categories and tags lists if not already present
+                    category = metadata.get("category", "")
+                    if category and category not in self.categories:
+                        self.categories.append(category)
+                        
+                    tags = metadata.get("tags", "")
+                    if tags and tags not in self.tags:
+                        self.tags.append(tags)
 
-                return metadata
-            except yaml.YAMLError as error:
-                raise ValueError(
-                    f"Error parsing YAML: {error}. Look at the metadata section in the Markdown file."
+                    # Cache the result
+                    self._metadata_cache[file_path] = metadata
+                    return metadata
+                except yaml.YAMLError as error:
+                    error_msg = f"Error parsing YAML: {error}. Look at the metadata section in the Markdown file."
+                    print(error_msg)
+                    # Cache the error result to avoid repeated parsing attempts
+                    self._metadata_cache[file_path] = {}
+                    raise ValueError(error_msg)
+            else:
+                print(
+                    f"No YAML front matter found in {file_path}. Look at the guidelines for creating a blog."
                 )
-        else:
-            print(
-                f"No YAML front matter found in {file_path}. Look at the guidelines for creating a blog."
-            )
-
+                # Cache the empty result
+                self._metadata_cache[file_path] = {}
+                return {}
+        except Exception as error:
+            print(f"Error reading file {file_path}: {error}")
+            # Cache the error result
+            self._metadata_cache[file_path] = {}
             return {}
 
     def process_blog(self, file_path) -> Blog | None:

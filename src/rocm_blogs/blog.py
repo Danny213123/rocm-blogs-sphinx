@@ -203,8 +203,20 @@ class Blog:
         except Exception as error:
             print(f"Error optimizing image {image}: {error}")
 
+    # Cache for image paths to avoid redundant file system operations
+    _image_path_cache = {}
+    
     def grab_image(self, rocmblogs) -> pathlib.Path:
-        """Grab the image for the blog"""
+        """Grab the image for the blog with caching for better performance"""
+        
+        # Check if we've already processed this blog's image
+        cache_key = str(self.file_path) if hasattr(self, 'file_path') else str(id(self))
+        if cache_key in self._image_path_cache:
+            cached_result = self._image_path_cache[cache_key]
+            # If we have a cached image path, use it directly
+            if cached_result['image_name']:
+                self.save_image_path(cached_result['image_name'])
+            return cached_result['relative_path']
 
         print(
             f"Processing image for blog: {self.blog_title if hasattr(self, 'blog_title') else 'Unknown'}"
@@ -216,20 +228,28 @@ class Blog:
         image = getattr(self, "thumbnail", None)
         print(f"Original thumbnail value: {image}")
 
-        print("Blog attributes:")
-        for attr_name in dir(self):
-            if not attr_name.startswith("__") and not callable(
-                getattr(self, attr_name)
-            ):
-                attr_value = getattr(self, attr_name)
-                if not isinstance(attr_value, (dict, list)) or attr_name == "thumbnail":
-                    print(f"  {attr_name}: {attr_value}")
+        # Reduce verbose logging to improve performance
+        # print("Blog attributes:")
+        # for attr_name in dir(self):
+        #     if not attr_name.startswith("__") and not callable(
+        #         getattr(self, attr_name)
+        #     ):
+        #         attr_value = getattr(self, attr_name)
+        #         if not isinstance(attr_value, (dict, list)) or attr_name == "thumbnail":
+        #             print(f"  {attr_name}: {attr_value}")
 
         full_image_path = None
+        image_name = None
 
         if not image:
             print("No thumbnail specified in metadata, using generic.jpg")
             self.image = "generic.jpg"
+            # Cache the result
+            self._image_path_cache[cache_key] = {
+                'relative_path': "./images/generic.jpg",
+                'image_name': "generic.jpg"
+            }
+            self.save_image_path("generic.jpg")
             return "./images/generic.jpg"
 
         if "/images/" in image or "\\images\\" in image:
@@ -240,7 +260,7 @@ class Blog:
             full_image_path = pathlib.Path(image)
             print(f"Found image at absolute path: {full_image_path}")
         else:
-
+            # Create a list of possible paths
             possible_paths = [
                 pathlib.Path(self.file_path).parent / image,
                 pathlib.Path(self.file_path).parent / "images" / image,
@@ -250,33 +270,33 @@ class Blog:
                 pathlib.Path(rocmblogs.blogs_directory) / "images" / image.lower(),
             ]
 
-            print("Checking possible image paths:")
+            # Check all paths in one go to reduce logging overhead
             for path in possible_paths:
-                print(f"  Checking: {path}")
                 if path.exists():
                     full_image_path = path
-                    print(f"  Found image at: {full_image_path}")
+                    print(f"Found image at: {full_image_path}")
                     break
 
             if not full_image_path:
                 images_dir = pathlib.Path(rocmblogs.blogs_directory) / "images"
                 if images_dir.exists():
-                    print(f"Listing all images in {images_dir}:")
+                    # Try to find a partial match more efficiently
+                    image_base = os.path.splitext(image)[0].lower()
                     for img_file in images_dir.glob("*"):
-                        print(f"  Available image: {img_file.name}")
-
-                    # Try to find a partial match
-                    print("Looking for partial matches:")
-                    image_base = os.path.splitext(image)[0]
-                    for img_file in images_dir.glob("*"):
-                        if image_base.lower() in img_file.name.lower():
-                            print(f"  Found partial match: {img_file}")
+                        if image_base in img_file.name.lower():
+                            print(f"Found partial match: {img_file}")
                             full_image_path = img_file
                             break
 
         if not full_image_path:
             print(f"Image not found: {image}")
             self.image = "generic.jpg"
+            # Cache the result
+            self._image_path_cache[cache_key] = {
+                'relative_path': "./images/generic.jpg",
+                'image_name': "generic.jpg"
+            }
+            self.save_image_path("generic.jpg")
             return "./images/generic.jpg"
 
         relative_path = os.path.relpath(
@@ -292,6 +312,12 @@ class Blog:
 
         image_name = os.path.basename(str(full_image_path))
         self.save_image_path(image_name)
+        
+        # Cache the result for future use
+        self._image_path_cache[cache_key] = {
+            'relative_path': relative_path,
+            'image_name': image_name
+        }
 
         return relative_path
 
